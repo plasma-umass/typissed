@@ -129,7 +129,7 @@ namespace TyPissed
                 var addr = pair.Key;
                 var text = pair.Value;
                 
-                sb.AppendFormat("\"{0}\",\"{1}\",\"{2}\",\"{3}\",\"{4}\",\"{5}\",\"{6}\"\n", _jobstate.ToString(),addr.A1Path(), addr.A1Workbook(), addr.A1Worksheet(), addr.Y, addr.X, text, _urls[addr]);
+                sb.AppendFormat("\"{0}\",\"{1}\",\"{2}\",\"{3}\",\"{4}\",\"{5}\",\"{6}\",\"{7}\"\n", _jobstate.ToString(),addr.A1Path(), addr.A1Workbook(), addr.A1Worksheet(), addr.Y, addr.X, text, _urls[addr]);
             }
 
             // write out to file
