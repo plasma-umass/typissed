@@ -5,6 +5,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "typissed", "typissed\typiss
 EndProject
 Project("{F2A71F9B-5D33-465A-A702-920D77279786}") = "ExcelParser", "..\parcel\Parcel\ExcelParser.fsproj", "{6DE2A2B9-C029-4BDB-8992-D16276471D9F}"
 EndProject
+Project("{F2A71F9B-5D33-465A-A702-920D77279786}") = "ConsoleApp", "ConsoleApp\ConsoleApp.fsproj", "{2EA4D4FD-8C1C-45AE-8C2D-5D7B0E32B7D1}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -19,6 +21,10 @@ Global
 		{6DE2A2B9-C029-4BDB-8992-D16276471D9F}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{6DE2A2B9-C029-4BDB-8992-D16276471D9F}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{6DE2A2B9-C029-4BDB-8992-D16276471D9F}.Release|Any CPU.Build.0 = Release|Any CPU
+		{2EA4D4FD-8C1C-45AE-8C2D-5D7B0E32B7D1}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{2EA4D4FD-8C1C-45AE-8C2D-5D7B0E32B7D1}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{2EA4D4FD-8C1C-45AE-8C2D-5D7B0E32B7D1}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{2EA4D4FD-8C1C-45AE-8C2D-5D7B0E32B7D1}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
