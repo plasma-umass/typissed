@@ -6,30 +6,21 @@ open ExcelParser
 
 [<EntryPoint>]
 let main argv = 
-    if argv.Length <> 4 then
-        printfn "Usage: ConsoleApp [AWS key] [AWS secret] [s3 bucket] [filename]"
+    if argv.Length <> 5 then
+        printfn "Usage: ConsoleApp [AWS key] [AWS secret] [s3 bucket] [output filename] [input dictionary GUID]"
         1
     else
         let aws_id = argv.[0]
         let aws_secret = argv.[1]
         let bucket = argv.[2]
         let filename = argv.[3]
+        let input_guid = Guid.Parse(argv.[4])
 
         printfn "Creating job..."
         let job = TyPissed.Job(aws_id, bucket)
 
-        printfn "Adding sample strings to job..."
-        let a1 = AST.Address.FromR1C1(1,1,"myworkbook","myworksheet","foobar")
-        let s1 = "2342345705"
-        job.AddInput(a1, s1)
-
-        let a2 = AST.Address.FromR1C1(4,1,"myworkbook","myworksheet","foobar")
-        let s2 = "435jhkjfd9"
-        job.AddInput(a2, s2)
-
-        let a3 = AST.Address.FromR1C1(13,10,"myworkbook","myworksheet","foobar")
-        let s3 = "helloworld!"
-        job.AddInput(a3, s3)
+        printfn "Getting input data from S3..."
+        let data = job.DeserializeInputsFromS3(input_guid, aws_secret)
 
         printfn "Rendering bitmaps and uploading to S3..."
         job.UploadAllImages(aws_secret)

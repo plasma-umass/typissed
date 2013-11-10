@@ -43,6 +43,32 @@ namespace TyPissed
             }
         }
 
+        public void DeserializeInputsFromS3(Guid input_id, string aws_secret)
+        {
+            // S3 filename
+            var key = "euses_inputs_" + input_id.ToString();
+
+            // download Job from S3
+            using (AmazonS3 client = Amazon.AWSClientFactory.CreateAmazonS3Client(_id, aws_secret))
+            {
+                GetObjectRequest getObjectRequest = new GetObjectRequest()
+                {
+                    BucketName = _s3bucket,
+                    Key = key
+                };
+
+                using (S3Response getObjectResponse = client.GetObject(getObjectRequest))
+                {
+                    using (Stream s = getObjectResponse.ResponseStream)
+                    {
+                        // deserialize
+                        IFormatter formatter = new BinaryFormatter();
+                        _inputs = (Dictionary<AST.Address, string>)formatter.Deserialize(s);
+                    }
+                }
+            }
+        }
+
         public string SerializeToS3(string secret)
         {
             using (MemoryStream stream = new MemoryStream()) {
@@ -104,6 +130,7 @@ namespace TyPissed
         {
             foreach (var pair in _inputs)
             {
+                Console.Write(".");
                 var addr = pair.Key;
                 var text = pair.Value;
 
