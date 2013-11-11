@@ -17,6 +17,38 @@ using System.Security.Cryptography;
 
 namespace TyPissed
 {
+    // Fisher-Yates shuffle extension method for LINQ
+    // from: http://stackoverflow.com/questions/1651619/optimal-linq-query-to-get-a-random-sub-collection-shuffle
+    public static class EnumerableExtensions
+    {
+        public static IEnumerable<T> Shuffle<T>(this IEnumerable<T> source)
+        {
+            return source.Shuffle(new Random());
+        }
+
+        public static IEnumerable<T> Shuffle<T>(
+            this IEnumerable<T> source, Random rng)
+        {
+            if (source == null) throw new ArgumentNullException("source");
+            if (rng == null) throw new ArgumentNullException("rng");
+
+            return source.ShuffleIterator(rng);
+        }
+
+        private static IEnumerable<T> ShuffleIterator<T>(
+            this IEnumerable<T> source, Random rng)
+        {
+            var buffer = source.ToList();
+            for (int i = 0; i < buffer.Count; i++)
+            {
+                int j = rng.Next(i, buffer.Count);
+                yield return buffer[j];
+
+                buffer[j] = buffer[i];
+            }
+        }
+    }
+
     [Serializable]
     // a class representing a big batch of MTurk fuzzer jobs
     public class Job
@@ -24,6 +56,7 @@ namespace TyPissed
         private static int FONT_SZ = 14;
         private Dictionary<AST.Address, string> _inputs = new Dictionary<AST.Address, string>();
         private Dictionary<AST.Address, string> _urls = new Dictionary<AST.Address, string>();
+        private Dictionary<string, string> _input_url_map = new Dictionary<string, string>();
         private string _id;
         private string _s3bucket;
         private Guid _jobstate;
@@ -35,6 +68,19 @@ namespace TyPissed
             _jobstate = Guid.NewGuid();
         }
 
+        public string Statistics()
+        {
+            var mean_length = _inputs.Select(pair => pair.Value.Length).Average();
+            var shortest_length = _inputs.Select(pair => pair.Value.Length).Min();
+            var longest_length = _inputs.Select(pair => pair.Value.Length).Max();
+            var sorted_lengths = _inputs.Select(pair => pair.Value.Length).ToList();
+            sorted_lengths.Sort();
+            var median_idx = sorted_lengths.Count() / 2; // yes, integer divide
+            var median_length = sorted_lengths.ElementAt(median_idx);
+
+            return String.Format("Number of inputs: {0}, Shortest string: {1}\nLongest string: {2}\nMean length: {3}\nMedian length: {4}", _inputs.Count(), shortest_length, longest_length, mean_length, median_length);
+        }
+
         public void AddInput(AST.Address addr, string input)
         {
             if (!_inputs.ContainsKey(addr))
@@ -43,7 +89,7 @@ namespace TyPissed
             }
         }
 
-        public void DeserializeInputsFromS3(Guid input_id, string aws_secret)
+        public void DeserializeInputsFromS3(string input_bucket, Guid input_id, string aws_secret)
         {
             // S3 filename
             var key = "euses_inputs_" + input_id.ToString();
@@ -53,7 +99,7 @@ namespace TyPissed
             {
                 GetObjectRequest getObjectRequest = new GetObjectRequest()
                 {
-                    BucketName = _s3bucket,
+                    BucketName = input_bucket,
                     Key = key
                 };
 
@@ -128,14 +174,54 @@ namespace TyPissed
 
         public void UploadAllImages(string secret)
         {
+            var bitmaps = new Dictionary<string, Bitmap>();
+            var biturls = new Dictionary<AST.Address, string>();
+
             foreach (var pair in _inputs)
             {
-                Console.Write(".");
                 var addr = pair.Key;
                 var text = pair.Value;
 
-                _urls.Add(addr, UploadImageToS3(addr, CreateBitmapImage(text, FONT_SZ), secret));
+                // check to see if we've already generated the image for this text
+                Bitmap b;
+                if (!bitmaps.TryGetValue(text, out b))
+                {
+                    // create the bitmap
+                    b = CreateBitmapImage(text, FONT_SZ);
+
+                    // add to bitmaps dict
+                    bitmaps.Add(text, b);
+                }
             }
+
+            Console.WriteLine("Uploading {0} images to MTurk for {1} assignments...", bitmaps.Count(), _inputs.Count());
+
+            int progress = 0;
+            foreach (var pair in _inputs)
+            {
+                progress += 1;
+                var addr = pair.Key;
+                var text = pair.Value;
+
+                Console.Write("\r{0:P}   ", (double)progress / _inputs.Count());
+
+                string url;
+                if (!_input_url_map.TryGetValue(text, out url))
+                {
+                    // get bitmap
+                    var b = bitmaps[text];
+
+                    // upload it
+                    url = UploadImageToS3(addr, b, secret);
+
+                    // add to map
+                    _input_url_map.Add(text, url);
+                }
+                // add to addr -> url map
+                _urls.Add(addr, url);
+            }
+
+            Console.Write("\n");
         }
 
         public void WriteJobToCSV(string filename)
@@ -150,8 +236,8 @@ namespace TyPissed
             // write header
             sb.Append("state_id,path,workbook,worksheet,R,C,original_text,image_url\n");
 
-            // write each input
-            foreach (var pair in _inputs)
+            // write each input in random order
+            foreach (var pair in _inputs.Shuffle())
             {
                 var addr = pair.Key;
                 var text = pair.Value;
@@ -258,6 +344,53 @@ namespace TyPissed
             objGraphics.Flush();
 
             return (objBmpImage);
+        }
+
+        public static void CleanBucket(string bucket, string aws_id, string aws_secret)
+        {
+            // set up client
+            using (AmazonS3 client = Amazon.AWSClientFactory.CreateAmazonS3Client(aws_id, aws_secret))
+            {
+                // check to ensure that the bucket actually exists
+                var dirinfo = new Amazon.S3.IO.S3DirectoryInfo(client, bucket);
+                if (dirinfo.Exists)
+                {
+                    Console.WriteLine("Bucket \"{0}\" already exists.  Erasing.  Sorry if this isn't what you wanted, dude.", bucket);
+
+                    // get a list of the bucket's objects
+                    var lor = new ListObjectsRequest
+                    {
+                        BucketName = bucket
+                    };
+
+                    using (ListObjectsResponse r = client.ListObjects(lor))
+                    {
+                        if (r.S3Objects.Count > 0)
+                        {
+                            List<KeyVersion> objects = r.S3Objects.Select(obj => new KeyVersion(obj.Key)).ToList();
+
+                            // batch-delete all the objects in the bucket
+                            DeleteObjectsRequest dor = new DeleteObjectsRequest
+                            {
+                                BucketName = bucket,
+                                Keys = objects
+                            };
+                            client.DeleteObjects(dor);
+                        }
+                    }
+                }
+                else
+                {
+                    Console.WriteLine("Creating new bucket \"{0}\"", bucket);
+
+                    // bucket doesn't exist; make a new one
+                    PutBucketRequest pbr = new PutBucketRequest
+                    {
+                        BucketName = bucket
+                    };
+                    client.PutBucket(pbr);
+                }
+            }
         }
     }
 }
