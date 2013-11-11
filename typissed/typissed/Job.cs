@@ -60,25 +60,29 @@ namespace TyPissed
         private string _id;
         private string _s3bucket;
         private Guid _jobstate;
+        private int _images_per_hit;
 
-        public Job(string aws_key, string s3bucket)
+        public Job(string aws_key, string s3bucket, int images_per_hit)
         {
             _id = aws_key;
             _s3bucket = s3bucket;
             _jobstate = Guid.NewGuid();
+            _images_per_hit = images_per_hit;
         }
 
         public string Statistics()
         {
             var mean_length = _inputs.Select(pair => pair.Value.Length).Average();
             var shortest_length = _inputs.Select(pair => pair.Value.Length).Min();
+            var shortest_string = _inputs.Where(pair => pair.Value.Length == shortest_length).First().Value;
             var longest_length = _inputs.Select(pair => pair.Value.Length).Max();
+            var longest_string = _inputs.Where(pair => pair.Value.Length == longest_length).First().Value;
             var sorted_lengths = _inputs.Select(pair => pair.Value.Length).ToList();
             sorted_lengths.Sort();
-            var median_idx = sorted_lengths.Count() / 2; // yes, integer divide
+            var median_idx = sorted_lengths.Count() / 2; // yes, integer divide; this is not precisely correct for even-sized collections
             var median_length = sorted_lengths.ElementAt(median_idx);
 
-            return String.Format("Number of inputs: {0}, Shortest string: {1}\nLongest string: {2}\nMean length: {3}\nMedian length: {4}", _inputs.Count(), shortest_length, longest_length, mean_length, median_length);
+            return String.Format("Number of inputs: {0},\nShortest string: \n\tLength: {1}\n\tContents: \"{2}\"\nLongest string:\n\tLength: {3}\n\tContents: \"{4}\"\nMean length: {5}\nMedian length: {6}", _inputs.Count(), shortest_length, shortest_string, longest_length, longest_string, mean_length, median_length);
         }
 
         public void AddInput(AST.Address addr, string input)
@@ -93,6 +97,9 @@ namespace TyPissed
         {
             // S3 filename
             var key = "euses_inputs_" + input_id.ToString();
+
+            // temporary storage
+            var inputs = new Dictionary<AST.Address, string>();
 
             // download Job from S3
             using (AmazonS3 client = Amazon.AWSClientFactory.CreateAmazonS3Client(_id, aws_secret))
@@ -109,10 +116,22 @@ namespace TyPissed
                     {
                         // deserialize
                         IFormatter formatter = new BinaryFormatter();
-                        _inputs = (Dictionary<AST.Address, string>)formatter.Deserialize(s);
+                        inputs = (Dictionary<AST.Address, string>)formatter.Deserialize(s);
                     }
                 }
             }
+
+            // sanity check
+            System.Diagnostics.Debug.Assert(_inputs.Select(pair => pair.Key).Distinct().Count() == _inputs.Count());
+
+            // remove all leading and trailing whitespace from each string; Turkers will not be able to see it
+            var ws = new System.Text.RegularExpressions.Regex(@"\s+");
+            inputs = inputs.Select(pair => new KeyValuePair<AST.Address, string>(pair.Key, ws.Replace(pair.Value.Trim(), " "))).ToDictionary(pair => pair.Key, pair => pair.Value);
+
+            // exclude strings that contain zero or more occurrences of only whitespace
+            // and replace runs of whitespaces with a single space
+            var r = new System.Text.RegularExpressions.Regex(@"^\s*$");
+            _inputs = inputs.Where(pair => !r.IsMatch(pair.Value)).ToDictionary(pair => pair.Key, pair => pair.Value);
         }
 
         public string SerializeToS3(string secret)
@@ -125,15 +144,37 @@ namespace TyPissed
                 IFormatter formatter = new BinaryFormatter();
                 formatter.Serialize(stream, this);
 
+                Console.Error.WriteLine("Upload stream size is: {0} bytes", stream.Length.ToString());
+
                 // upload Job to S3
                 using (AmazonS3 client = Amazon.AWSClientFactory.CreateAmazonS3Client(_id, secret))
                 {
+                    // set the stream position to the start of the stream
+                    stream.Position = 0;
                     var tu = new Amazon.S3.Transfer.TransferUtility(client);
                     tu.Upload(stream, _s3bucket, key);
                 }
             }
 
             return _jobstate.ToString();
+        }
+
+        public string SerializeToFile()
+        {
+            // S3 filename
+            var filename = "state_" + _jobstate.ToString();
+            var path = Path.GetFullPath(filename);
+
+            // serialize to memory stream
+            IFormatter formatter = new BinaryFormatter();
+
+            // write to file
+            using (Stream stream = new FileStream(filename, FileMode.Create, FileAccess.Write, FileShare.None))
+            {
+                formatter.Serialize(stream, this);
+            }
+
+            return path;
         }
 
         public static Job DeserializeFromS3(string bucket, string state_id, string aws_id, string aws_secret)
@@ -194,7 +235,7 @@ namespace TyPissed
                 }
             }
 
-            Console.WriteLine("Uploading {0} images to MTurk for {1} assignments...", bitmaps.Count(), _inputs.Count());
+            Console.WriteLine("Uploading {0} images to MTurk for {1} assignments...", bitmaps.Count(), _inputs.Count() / _images_per_hit);
 
             int progress = 0;
             foreach (var pair in _inputs)
@@ -234,16 +275,57 @@ namespace TyPissed
             var sb = new StringBuilder();
 
             // write header
-            sb.Append("state_id,path,workbook,worksheet,R,C,original_text,image_url\n");
+            sb.Append("state_id,");
 
-            // write each input in random order
-            foreach (var pair in _inputs.Shuffle())
+            // for each image, append header
+            for (int i = 0; i < _images_per_hit; i++)
             {
-                var addr = pair.Key;
-                var text = pair.Value;
-                
-                sb.AppendFormat("\"{0}\",\"{1}\",\"{2}\",\"{3}\",\"{4}\",\"{5}\",\"{6}\",\"{7}\"\n", _jobstate.ToString(),addr.A1Path(), addr.A1Workbook(), addr.A1Worksheet(), addr.Y, addr.X, text, _urls[addr]);
+                sb.AppendFormat("path_{0},workbook_{0},worksheet_{0},R_{0},C_{0},original_text_{0},image_url_{0}", i);
+                if (i < _images_per_hit - 1)
+                {
+                    sb.Append(",");
+                }
             }
+            sb.Append("\n");
+
+            // shuffle inputs
+            var inputs = _inputs.Shuffle().ToArray();
+
+            // take in groups of images_per_hit
+            for (int i = 0; i < inputs.Length / _images_per_hit; i++ )
+            {
+                // write each input
+                for (int j = 0; j < _images_per_hit; j++)
+                {
+                    var addr = inputs[i * _images_per_hit + j].Key;
+                    var text = inputs[i * _images_per_hit + j].Value;
+
+                    // this is the first image per group
+                    if (j % _images_per_hit == 0)
+                    {
+                        // write job state id
+                        sb.AppendFormat("{0},", _jobstate.ToString());
+                    }
+
+                    // write image string
+                    sb.AppendFormat("\"{0}\",\"{1}\",\"{2}\",\"{3}\",\"{4}\",\"{5}\",\"{6}\"", @addr.A1Path(), @addr.A1Workbook(), @addr.A1Worksheet(), addr.Y, addr.X, text, @_urls[addr]);
+
+
+                    if (j % _images_per_hit == _images_per_hit - 1)
+                    {
+                        // this is the last image per group, write newline
+                        sb.Append("\n");
+                    }
+                    else
+                    {
+                        // otherwise, write comma
+                        sb.Append(",");
+                    }
+                }
+            }
+
+            // if there are any remaining images
+            // TODO
 
             // write out to file
             using (var f = File.Create(filename))
@@ -251,6 +333,50 @@ namespace TyPissed
                 Byte[] data = new UTF8Encoding(true).GetBytes(sb.ToString());
                 f.Write(data, 0, data.Length);
             }
+        }
+
+        public string WriteTurkTemplate()
+        {
+            var preamble =
+            "<h3>Transcribe the text in the image below.</h3>\n\n" +
+
+            "<div class=\"highlight-box\">\n" +
+            "<ul>\n" +
+                "\t<li>Please type the text exactly as shown for each of the images including capitalization, spaces, and punctuation.</li>\n" +
+                "\t<li>For ease of entry, the TAB key moves to the next field (SHIFT-TAB moves to the previous field).</li>\n" +
+                "\t<li>The ENTER key submits the HIT. Don&#39;t hit ENTER when you mean to hit TAB!</li>\n" +
+            "</ul>\n" +
+            "</div>\n\n";
+
+            string images = "<p>\n";
+            for (int i = 0; i < _images_per_hit; i++) {
+                images += "\t<img alt=\"If you see this text, type MISSING\" src=\"${image_url_" + i.ToString() + "}\" /><br />\n";
+            }
+            images += "</p>\n\n";
+
+            var instructions = "<p>Enter the image text in the box below:</p>\n\n";
+
+            string inputs = "<p>\n";
+            for (int i = 0; i < _images_per_hit; i++) {
+                inputs += "\t<input id=\"input_" + i.ToString() + "\" name=\"input_" + i.ToString() + "\" size=\"30\" tabindex=\"1\" type=\"text\" /><br />\n";
+            }
+            inputs += "</p>\n\n";
+
+            string postamble =
+            "<p>\n" +
+            "<style type=\"text/css\"><!--\n" +
+            ".highlight-box { border:solid 0px #98BE10; background:#FCF9CE; color:#222222; padding:4px; text-align:left; font-size: smaller;}\n" +
+            "-->\n" +
+            "</style>\n" +
+            "</p>\n" +
+            "<script type=\"text/javascript\">\n" +
+            "//<![CDATA[\n" +
+            "document.getElementById(\"input_0\").focus();\n" +
+            "document.getElementById(\"input_0\").select();\n" +
+            "//]]>\n" +
+            "</script>";
+
+            return preamble + images + instructions + inputs + postamble;
         }
 
         public string GetImageName(AST.Address addr)

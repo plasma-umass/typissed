@@ -6,8 +6,8 @@ open ExcelParser
 
 [<EntryPoint>]
 let main argv = 
-    if argv.Length <> 6 then
-        printfn "Usage: ConsoleApp [AWS key] [AWS secret] [s3 bucket] [output filename] [input dictionary GUID] [input s3 bucket]"
+    if argv.Length <> 7 then
+        printfn "Usage: ConsoleApp [AWS key] [AWS secret] [s3 bucket] [output filename] [input dictionary GUID] [input s3 bucket] [images per hit]"
         1
     else
         let aws_id = argv.[0]
@@ -16,11 +16,12 @@ let main argv =
         let filename = argv.[3]
         let input_guid = Guid.Parse(argv.[4])
         let input_bucket = argv.[5]
+        let images_per_hit = System.Int32.Parse(argv.[6])
 
         TyPissed.Job.CleanBucket(bucket, aws_id, aws_secret);
 
         printfn "Creating job..."
-        let job = TyPissed.Job(aws_id, bucket)
+        let job = TyPissed.Job(aws_id, bucket, images_per_hit)
 
         printfn "Getting input data from S3..."
         let data = job.DeserializeInputsFromS3(input_bucket, input_guid, aws_secret)
@@ -35,12 +36,9 @@ let main argv =
 
         printfn "Uploading job state to S3..."
         let state = (job.SerializeToS3(aws_secret))
-        printfn "Job state ID is: %s" state
+//        let outfile = job.SerializeToFile()
+//        printfn "Job state written to: %s" outfile
 
-//        printfn "Downloading job state from S3..."
-//        let job2 = TyPissed.Job.DeserializeFromS3(bucket, state, aws_id, aws_secret)
+        printfn "Paste the following into MTurk:\n-------PASTE START-------\n\n%s\n\n-------PASTE END------\n" (job.WriteTurkTemplate())
 
-//        printfn "Deserialized job contains the following images:\n%s" (String.Join("\n", job2.GetInternalData()))
-
-        printfn "Done."
         0 // return an integer exit code
