@@ -15,6 +15,8 @@ let main argv =
         let numstrings = System.Int32.Parse(argv.[4])
         let images_per_hit = System.Int32.Parse(argv.[5])
 
+        TyPissed.Job.CleanBucket(s3_bucket, aws_key, aws_secret);
+
         printfn "Generating %d random floating point numbers..." numstrings
 
         // init RNG

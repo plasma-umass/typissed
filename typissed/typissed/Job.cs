@@ -474,7 +474,7 @@ namespace TyPissed
 
         public static AST.Address SimulatedAddress(int i)
         {
-            return AST.Address.FromR1C1(1, 1, "simulated", "simulated", "nopath");
+            return AST.Address.FromR1C1(i/256, i%256, "simulated", "simulated", "nopath");
         }
 
         public static void CleanBucket(string bucket, string aws_id, string aws_secret)
