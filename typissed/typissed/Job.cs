@@ -472,6 +472,11 @@ namespace TyPissed
             return (objBmpImage);
         }
 
+        public static AST.Address SimulatedAddress(int i)
+        {
+            return AST.Address.FromR1C1(1, 1, "simulated", "simulated", "nopath");
+        }
+
         public static void CleanBucket(string bucket, string aws_id, string aws_secret)
         {
             // set up client
